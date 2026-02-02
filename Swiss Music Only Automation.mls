@@ -1,0 +1,210 @@
+// Published under The MIT License
+// Copyright 2026, Nikita Schaffner, for Radio4TNG
+// Description: 
+// This is a helper script that runs alongside the Swiss Music Only show, to send current playing metadata via mAirlist.
+// It checks if the show is running. If it does, it will grab the shows now playing data from a URL.
+// The data is then used in a silent object that is manually played via the script.
+// This script is running in tandem with a second helper script. 
+// We will stop execution of this scripts main procedure, if the other helper script has turned automation back on.
+
+var
+	LastDisplayedTitleArtist	: String; // Saved as string that we use to compare later: 'Title Artist'
+	CurrentTitle				: String;
+	CurrentArtist				: String;
+	DataAvailable				: Boolean; // Check if data was succesfully retreived from the URL
+	isProcedureRunning			: Boolean; // True as long at the show is running
+	LastPlaylistItem			: IPlaylistItem;
+
+const
+	TargetDatabaseID 			= ''; // The item we will check if it is running
+	silentID 					= ''; // This is the Database ID of the silent object we will insert to play
+	DataURL 					= ''; // URL with XML data
+
+
+procedure OnLoad;
+begin
+	EnableTimer(4000);
+end;
+
+
+function IsShowPlaying: Boolean;
+// Return True if one of the players is playing the Swiss Music only show
+// We will check this by comparing the Database ID of the show and the currently playing item 
+
+var
+	Player			: IPlaylistPlayerControl;
+	CurrentItem		: IPlaylistItem;
+	i				: Integer;
+
+begin
+	Result := False;
+
+	for i := 0 to CurrentPlaybackControl.GetPlayerCount - 1 do // For all players that we have
+	begin
+		Player := CurrentPlaybackControl.GetPlayer(i);
+		
+		if Player.GetState = psPlaying then // Is player playing?
+		begin
+			CurrentItem := Player.GetItem;
+			
+			// Compare current playing items Database ID with the item we look for
+			if CurrentItem.GetDatabaseID = TargetDatabaseID then 
+			begin
+				Result := True;
+				Exit; // Exit early since we found a match
+			end;
+		end;
+	end;
+end;
+
+
+procedure CreateSilentItem(Title, Artist: String);
+// Create the silent object, change the Title and name, then play it
+var
+	item : IPlaylistItem;
+
+begin
+	item := Database(0).CreatePlaylistItem(silentID);
+
+	item.SetTitle(Title);
+	item.SetArtist(Artist);
+	Playlist(0).Insert(0, item);
+
+	LastPlaylistItem := item;
+end;
+
+
+procedure PlayLatestItem;
+var
+	Controller		: IPlaybackControl;
+	Player			: IPlaylistPlayerControl;
+	PlayerNumber 	: Integer;
+
+begin
+	Controller		:= CurrentPlaybackControl;
+	PlayerNumber	:= Controller.GetPlayerOfItem(LastPlaylistItem);
+
+	if PlayerNumber >= 0 then begin			// Is our item assigned to any available player?
+		Player := Controller.GetPlayer(PlayerNumber);
+
+		if Player.GetState = psLoaded then	// If it's ready and loaded, play it
+			Player.Start;
+	end;
+end;
+
+
+//
+// XML Functions
+//
+
+function ExtractAfter(const Source, Search: string; StartPos: Integer): string;
+var
+  PosFound: Integer;
+begin
+  Result := '';
+  PosFound := Pos(Search, Copy(Source, StartPos, Length(Source) - StartPos + 1));
+  if PosFound > 0 then
+    Result := Copy(Source, StartPos + PosFound - 1, Length(Source));
+end;
+
+
+function GetValueBetween(const Source, StartTag, EndTag: string; AfterPos: Integer): string;
+var
+  StartPos, EndPos: Integer;
+  TempStr: string;
+begin
+  Result := '';
+  
+  // Get substring starting from AfterPos
+  TempStr := Copy(Source, AfterPos, Length(Source) - AfterPos + 1);
+  
+  // Find start tag
+  StartPos := Pos(StartTag, TempStr);
+  if StartPos > 0 then
+  begin
+    StartPos := StartPos + Length(StartTag);
+    
+    // Find end tag
+    EndPos := Pos(EndTag, Copy(TempStr, StartPos, Length(TempStr) - StartPos + 1));
+    if EndPos > 0 then
+      Result := Copy(TempStr, StartPos, EndPos - 1);
+  end;
+end;
+
+
+procedure ExtractXML(XMLContent: string);
+var
+	PresentPos: Integer;
+begin
+	DataAvailable := False; // Disable as long as we don't have clean new data
+	
+	// Find "present" item
+	PresentPos := Pos('sequence="present"', XMLContent);
+
+	if PresentPos > 0 then
+	begin
+		// Extract values and write new data
+		CurrentArtist := GetValueBetween(XMLContent, '<artist>', '</artist>', PresentPos);
+		CurrentTitle := GetValueBetween(XMLContent, '<title>', '</title>', PresentPos);
+		DataAvailable := True; // Re-enable
+	end;
+end;
+
+
+procedure FetchData;
+// Getting the Data off the website and process it
+var
+	XMLdata: string;
+begin
+	XMLdata := HTTPGet(DataURL);
+	// SystemLog(XMLdata);
+	ExtractXML(XMLdata);
+end;
+
+
+procedure OnTimer; // Main loop
+begin
+
+	if IsShowPlaying then begin
+		if not isProcedureRunning then begin				// If show just started
+			SystemLog('Swiss Music Only is running')
+
+			isProcedureRunning := True						// Set Running flag
+			CurrentPlaybackControl.SetAutomation(False)		// Turn off player automation if show just started
+		end;
+		
+		// We will only run our procedure, as long as the automation is turned off.
+		// The automation will be turned back on with the second helper script.
+		// The second helper script works as a backup, in case something went wrong during the execution of this script.
+
+		if not CurrentPlaybackControl.GetAutomation then begin	
+			FetchData; // Fetch XML Data off the website
+		
+			if DataAvailable then begin
+			
+				// Check if the last data we fetched is NOT what we last displayed
+				if CurrentTitle + CurrentArtist <> LastDisplayedTitleArtist then begin
+					CreateSilentItem(CurrentTitle, CurrentArtist);
+					LastDisplayedTitleArtist := CurrentTitle + CurrentArtist;
+					SystemLog('Swiss Music Only: ' + CurrentArtist + ' ' + CurrentTitle);
+				end;
+			end;
+			
+			PlayLatestItem; // Always try to play latest item.
+		end;
+
+	end
+	else begin
+		// If the show is not running, check if our running flag is still set. 
+		// If it's set, it means the show has just ended playing.
+		if isProcedureRunning then begin
+			SystemLog('Swiss Music Only has stopped');
+
+			isProcedureRunning 			:= False;
+			LastDisplayedTitleArtist 	:= '';
+		end;
+	end;
+end;
+ 
+begin
+end.

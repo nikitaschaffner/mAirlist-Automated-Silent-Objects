@@ -51,10 +51,14 @@ begin
             end;
 
             if Value.GetDatabaseID = TargetDatabaseID then begin
-                Inc(Count);
-                TargetExists        := True;
-                TargetDatabaseItem  := Value;   // Save the playlist item for later
-                ItemAfterTarget     := True;    // Set count flag, so only items after our target are counted.
+                // We have to make sure we only count the very first Target item. 
+                // In case of a news break, a second item might exist and we overwrite the non playing item, breaking the script.
+                if TargetExists then begin
+                    Inc(Count);
+                    TargetExists        := True;
+                    TargetDatabaseItem  := Value;   // Save the playlist item for later
+                    ItemAfterTarget     := True;    // Set count flag, so only items after our target are counted.
+                end;
             end;
         end;
     end;

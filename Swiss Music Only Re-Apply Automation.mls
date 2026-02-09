@@ -21,7 +21,30 @@ begin
 end;
 
 
-function IsTargetInPlaylistWithMoreItems: Boolean;
+function TargetPlaying(TargetToCheck: IPlayListItem): Boolean;
+// Return True if the target is currently playing
+
+var
+	Controller      : IPlaybackControl;
+    Player          : IPlaylistPlayerControl;
+    PlayerNumber    : Integer;
+
+begin
+    Result          := False;	
+
+    Controller      := CurrentPlaybackControl;
+    PlayerNumber    := Controller.GetPlayerOfItem(TargetToCheck);
+
+    if PlayerNumber >= 0 then begin
+        Player := Controller.GetPlayer(PlayerNumber);
+
+        if player.GetState = psPlaying then
+            Result := True;
+    end;
+end;
+
+
+function IsTargetPlayingInPlaylistWithMoreItems: Boolean;
 // We will check if the target show is currently in the playlist. 
 // Additionally, we check how many other items, that are not part of the show, are also in the playlist.
 // We will ignore the Silent Playlist Item that is used for the show.
@@ -53,11 +76,13 @@ begin
             if Value.GetDatabaseID = TargetDatabaseID then begin
                 // We have to make sure we only count the very first Target item. 
                 // In case of a news break, a second item might exist and we overwrite the non playing item, breaking the script.
-                if TargetExists then begin
-                    Inc(Count);
-                    TargetExists        := True;
-                    TargetDatabaseItem  := Value;   // Save the playlist item for later
-                    ItemAfterTarget     := True;    // Set count flag, so only items after our target are counted.
+                if not TargetExists then begin
+                    if TargetPlaying(Value) then begin
+                        Inc(Count);
+                        TargetExists        := True;
+                        TargetDatabaseItem  := Value;   // Save the playlist item for later
+                        ItemAfterTarget     := True;    // Set count flag, so only items after our target are counted.$
+                    end;
                 end;
             end;
         end;
@@ -72,30 +97,6 @@ begin
 end;
 
 
-function TargetPlaying: Boolean;
-// Return True if the target is currently playing
-
-var
-	Controller      : IPlaybackControl;
-    Player          : IPlaylistPlayerControl;
-    PlayerNumber    : Integer;
-
-begin
-    Result          := False;	
-
-    Controller      := CurrentPlaybackControl;
-    PlayerNumber    := Controller.GetPlayerOfItem(TargetDatabaseItem);
-
-    if PlayerNumber >= 0 then begin
-        Player := Controller.GetPlayer(PlayerNumber);
-
-        if player.GetState = psPlaying then
-            Result := True;
-    end;
-end;
-
-
-
 procedure OnTimer;
 var
     Controller      : IPlaybackControl;
@@ -104,10 +105,9 @@ var
 begin
     Controller      := CurrentPlaybackControl;
 
-    if IsTargetInPlaylistWithMoreItems then begin   // Is the show in the playlist and are there more items too?
-        if TargetPlaying then begin                 // Is show currently playing?
+    if IsTargetPlayingInPlaylistWithMoreItems then begin   // Is the show in the playlist, playing and are there more items in the playlist too?
+            SystemLog('Swiss Music Only Helper: Re-Appling Automation');
             Controller.SetAutomation(True);         // Set player into Auto Mode
-        end;
     end;
 end;
 
